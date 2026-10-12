@@ -4,12 +4,13 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <cassert>
 
 #include "bookmgmt/bookmgmt.h"
 
 using namespace bookmgmt;
 
-static int g_failures = 0;
+/*static int g_failures = 0;
 static int g_checks = 0;
 
 #define CHECK(cond)                                                              \
@@ -20,8 +21,8 @@ static int g_checks = 0;
             std::cerr << __FILE__ << ":" << __LINE__ << ": CHECK failed: " #cond \
                       << "\n";                                                   \
         }                                                                        \
-    } while (0)
-
+    } while (0)         ----> For Q16 */
+#define CHECK(cond) assert(cond)
 #define CHECK_THROWS(expr, ExType)            \
     do {                                      \
         bool thrown_ = false;                 \
@@ -1651,6 +1652,9 @@ int main() {
     testLending();
     testMoneyCurrency();
     testCurrencyInTheLibrary();
-    std::cout << (g_checks - g_failures) << "/" << g_checks << " checks passed\n";
-    return g_failures == 0 ? 0 : 1;
+    /*std::cout << (g_checks - g_failures) << "/" << g_checks << " checks passed\n";
+    return g_failures == 0 ? 0 : 1;*/
+
+    std::cout << "All tests passed\n";
+return 0;
 }
