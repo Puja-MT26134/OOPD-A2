@@ -1,0 +1,11 @@
+# Compiled programs
+*.exe
+*.o
+*.obj
+
+# Build files
+build/
+cmake-build-*/
+
+# Editor settings
+.vscode/
