@@ -2,12 +2,16 @@
 // and runs a batch of purchase requests through the acquisition manager.
 
 #include <iostream>
+#include <limits>
+#include <sstream>
+#include <map>
+#include <algorithm>
 
 #include "bookmgmt/bookmgmt.h"
 
 using namespace bookmgmt;
 
-int main()
+int legacyDemo()
 {
     Catalog catalog;
 
@@ -235,19 +239,56 @@ std::cout << "Remaining library budget: "
 // Existing order history now displays the vendor.
 acq.printReport(std::cout);
 
-    // Q13: searches by author, by ISBN/ISSN and by a range of publication years.
-    std::cout << "\n=== Q13: Searches ===\n";
-    const auto printFound = [](const char* label, const std::vector<const Resource*>& found) {
-        std::cout << label << " -> " << found.size() << " found\n";
-        for (const Resource* r : found) std::cout << "  " << r->summary() << "\n";
-    };
-    printFound("Author \"martin\"", catalog.searchAuthor("martin"));
-    printFound("ISBN 9780132350884", catalog.searchIdentifier("9780132350884"));
-    printFound("ISSN 0001-0782", catalog.searchIdentifier("0001-0782"));
-    printFound("Years 2008-2013", catalog.searchYears(2008, 2013));
-    printFound("Author \"nobody\"", catalog.searchAuthor("nobody"));
-    
-        // Q14: lending. Print copies are borrowed and returned (limited by the copies held);
+    // Q13: user chooses the search type and enters their own query.
+    while (true) {
+        std::cout << "\n=== Q13: INTERACTIVE SEARCH ===\n"
+                  << "1. Search by author\n"
+                  << "2. Search by ISBN / ISSN\n"
+                  << "3. Search by publication year range\n"
+                  << "0. Finish Q13 and continue demo\n"
+                  << "Enter choice: ";
+        int choice;
+        if (!(std::cin >> choice)) {
+            if (std::cin.eof()) break;
+            std::cin.clear();
+            std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+            std::cout << "Invalid choice. Try again.\n";
+            continue;
+        }
+        std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+        if (choice == 0) break;
+        std::vector<const Resource*> found;
+        try {
+            if (choice == 1 || choice == 2) {
+                std::string query;
+                std::cout << (choice == 1 ? "Enter author name: " : "Enter ISBN/ISSN: ");
+                std::getline(std::cin, query);
+                found = (choice == 1) ? catalog.searchAuthor(query)
+                                      : catalog.searchIdentifier(query);
+            } else if (choice == 3) {
+                int startYear, endYear;
+                std::cout << "Enter start year and end year (e.g. 2008 2013): ";
+                if (!(std::cin >> startYear >> endYear)) {
+                    std::cin.clear();
+                    std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+                    std::cout << "Invalid year input.\n";
+                    continue;
+                }
+                std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+                found = catalog.searchYears(startYear, endYear);
+            } else {
+                std::cout << "Invalid choice. Choose 0, 1, 2 or 3.\n";
+                continue;
+            }
+            std::cout << "Found " << found.size() << " resource(s):\n";
+            for (const Resource* r : found) std::cout << "  " << r->summary() << "\n";
+            if (found.empty()) std::cout << "No matching resources.\n";
+        } catch (const std::exception& e) {
+            std::cout << "Search error: " << e.what() << "\n";
+        }
+    }
+
+    // Q14: lending. Print copies are borrowed and returned (limited by the copies held);
     // electronic resources have sessions (limited by the licensed seats).
     std::cout << "\n=== Q14: Lending ===\n";
     LendingDesk desk(catalog);
@@ -313,5 +354,183 @@ acq.printReport(std::cout);
     if (!usAcq.canPurchase("U002", 1, &why)) std::cout << "U002 rejected: " << why << "\n";
     usAcq.printReport(std::cout);
     
+    return 0;
+}
+
+
+static int readInt(const std::string& prompt, int lo, int hi) {
+    for (;;) {
+        std::cout << prompt;
+        int x;
+        if (std::cin >> x && x >= lo && x <= hi) {
+            std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+            return x;
+        }
+        if (std::cin.eof()) return lo;
+        std::cin.clear();
+        std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+        std::cout << "Invalid input; enter " << lo << " to " << hi << ".\n";
+    }
+}
+
+static void showRollover() {
+    std::cout << "\n=== Q10: User-configurable rollover ===\n";
+    Budget budget(Money::of(25000));
+    budget.setQuota(ResourceCategory::Book, {10, Money::of(9200)});
+    Catalog c;
+    c.emplace<Book>("B001", "Clean Code", std::vector<std::string>{"Robert C. Martin"},
+                    "978-0132350884", "Prentice Hall", 2008, Money::of(450));
+    AcquisitionManager acq(c, budget);
+    acq.purchase("B001", 4);
+    std::cout << "Current budget: " << budget.total() << "\n"
+              << "Spent: " << budget.spent() << "\n"
+              << "Unspent: " << budget.remaining() << "\n";
+    int pct = readInt("Carry forward percentage (0-100): ", 0, 100);
+    Budget next = budget.rollover(pct);
+    std::cout << "Carry forward (" << pct << "%): " << budget.carryForward(pct) << "\n"
+              << "Next year total: " << next.total() << "\n"
+              << "Next year spent (reset): " << next.spent() << "\n";
+    next.print(std::cout);
+}
+
+static void showVendors() {
+    std::cout << "\n=== Q12: User-entered vendor prices ===\n";
+    Catalog catalog;
+    catalog.emplace<Book>("B001", "Clean Code", std::vector<std::string>{"Robert C. Martin"},
+                          "978-0132350884", "Prentice Hall", 2008, Money::of(450));
+    Budget budget(Money::of(25000));
+    AcquisitionManager acq(catalog, budget);
+    std::cout << "Resource: " << catalog.get("B001").summary() << "\n"
+              << "Listed unit price: " << catalog.get("B001").unitPrice() << "\n"
+              << "Enter vendor offers. The system AUTOMATICALLY chooses the cheapest.\n";
+    int n = readInt("Number of vendors (1-10): ", 1, 10);
+    std::map<std::string, int> offers;
+    for (int i = 0; i < n; ++i) {
+        std::string name;
+        do {
+            std::cout << "Vendor " << (i+1) << " name: ";
+            std::getline(std::cin, name);
+            if (name.empty() || offers.count(name)) std::cout << "Enter a unique nonempty name.\n";
+        } while (name.empty() || offers.count(name));
+        int rupees = readInt("Unit price in whole INR (0-100000): ", 0, 100000);
+        offers[name] = rupees;
+        acq.setVendorPrice("B001", name, Money::of(rupees));
+    }
+    std::cout << "\nAvailable vendor offers:\n";
+    for (const auto& v : offers) std::cout << "  " << v.first << ": INR " << v.second << " per copy\n";
+    std::cout << "Cheapest vendor selected automatically: " << acq.cheapestVendor("B001") << "\n";
+    int qty = readInt("Quantity to purchase (1-20): ", 1, 20);
+    std::cout << "Calculated total quote (pricing rules applied): " << acq.quote("B001", qty) << "\n";
+    try {
+        PurchaseRecord order = acq.purchase("B001", qty);
+        std::cout << "Purchase: " << (order.approved ? "Approved" : "Rejected") << "\n"
+                  << "Vendor used: " << order.vendor << "\n"
+                  << "Charged: " << order.cost << "\n"
+                  << "Remaining budget: " << budget.remaining() << "\n";
+    } catch (const std::exception& e) {
+        std::cout << "Purchase rejected: " << e.what() << "\n";
+    }
+    acq.printReport(std::cout);
+}
+
+static void showSearch() {
+    Catalog c;
+    c.emplace<Book>("B001", "Clean Code", std::vector<std::string>{"Robert C. Martin"}, "978-0132350884", "Prentice Hall", 2008, Money::of(450));
+    c.emplace<Book>("B002", "The C++ Programming Language", std::vector<std::string>{"Bjarne Stroustrup"}, "978-0321563842", "Addison-Wesley", 2013, Money::of(1200));
+    c.emplace<Journal>("J001", "Communications of the ACM", "0001-0782", "ACM", 2026, Money::of(300), 12, 2);
+    c.emplace<EBook>("E001", "Clean Code (e-book)", std::vector<std::string>{"Robert C. Martin"}, "978-0132350884", "Prentice Hall", 2008, Money::of(20), "https://ebooks.example/e001", EBookFormat::EPUB, true, LicenseModel::AnnualSubscription, Money::of(500));
+    c.emplace<AudioBook>("A001", "Clean Code (audio)", std::vector<std::string>{"Robert C. Martin"}, "Narrator One", "Prentice Hall", 2020, Money::of(15), "https://audio.example/a001", 480, LicenseModel::AnnualSubscription, Money::of(200));
+    for (;;) {
+        std::cout << "\n=== Q13: Search ===\n1. Author\n2. ISBN / ISSN\n3. Publication year range\n0. Back\n";
+        int choice = readInt("Search choice: ", 0, 3);
+        if (choice == 0) return;
+        try {
+            std::vector<const Resource*> found;
+            if (choice == 1 || choice == 2) {
+                std::string q;
+                std::cout << (choice == 1 ? "Author: " : "ISBN / ISSN: ");
+                std::getline(std::cin, q);
+                found = choice == 1 ? c.searchAuthor(q) : c.searchIdentifier(q);
+            } else {
+                int from = readInt("Start year (0-9999): ", 0, 9999);
+                int to = readInt("End year (0-9999): ", 0, 9999);
+                found = c.searchYears(from, to);
+            }
+            std::cout << "Found " << found.size() << " resource(s):\n";
+            for (const Resource* r : found) std::cout << "  " << r->summary() << "\n";
+        } catch (const std::exception& e) { std::cout << "Search error: " << e.what() << "\n"; }
+    }
+}
+
+// Capture the existing demonstration, then display only the requested section.
+// This preserves the original demo logic without duplicating business rules.
+static std::string captureOriginalDemo() {
+    std::ostringstream capture;
+    std::istringstream noSearch("0\n");
+    auto* oldOut = std::cout.rdbuf(capture.rdbuf());
+    auto* oldIn = std::cin.rdbuf(noSearch.rdbuf());
+    try { legacyDemo(); } catch (...) {
+        std::cout.rdbuf(oldOut); std::cin.rdbuf(oldIn); throw;
+    }
+    std::cout.rdbuf(oldOut);
+    std::cin.rdbuf(oldIn);
+    return capture.str();
+}
+
+static void showSection(const std::string& whole, const std::string& heading,
+                        const std::string& nextHeading) {
+    auto pos = whole.find(heading);
+    if (pos == std::string::npos) { std::cout << "Section not found.\n"; return; }
+    auto end = nextHeading.empty() ? std::string::npos : whole.find(nextHeading, pos + heading.size());
+    std::cout << whole.substr(pos, end == std::string::npos ? end : end-pos);
+}
+
+int main() {
+    const std::vector<std::pair<std::string,std::string>> sections = {
+        {"=== Catalog ===", "=== Quotes ==="},
+        {"=== Quotes ===", "=== Acquisition report ==="},
+        {"=== Acquisition report ===", "=== Cancellation ==="},
+        {"=== Cancellation ===", "=== Departments ==="},
+        {"=== Departments ===", "=== Taxes ==="},
+        {"=== Taxes ===", "=== Q10: Year-End Rollover ==="},
+        {"=== Q11: Atomic Batch Processing ===", "=== Q12: Vendors ==="},
+        {"=== Q14: Lending ===", "=== Q15: Currencies ==="},
+        {"=== Q15: Currencies ===", ""}
+    };
+    for (;;) {
+        std::cout << "\n========== BOOK MANAGEMENT DEMO ==========\n"
+                  << "1. Catalog / resource types (Q1-Q3)\n"
+                  << "2. Quotes / hardcover / bulk (Q4-Q5)\n"
+                  << "3. Acquisition / quota (Q7)\n"
+                  << "4. Cancellation (Q8)\n"
+                  << "5. Department budgets (Q9)\n"
+                  << "6. Taxes (Q6)\n"
+                  << "7. Rollover: ENTER PERCENT (Q10)\n"
+                  << "8. Atomic batch (Q11)\n"
+                  << "9. Vendors: ENTER OFFERS (Q12)\n"
+                  << "10. Interactive search (Q13)\n"
+                  << "11. Lending (Q14)\n"
+                  << "12. Currency (Q15)\n"
+                  << "13. Full original demo output (Q1-Q15)\n"
+                  << "0. Exit\n";
+        int choice = readInt("Choose: ", 0, 13);
+        if (choice == 0) break;
+        try {
+            if (choice == 7) showRollover();
+            else if (choice == 9) showVendors();
+            else if (choice == 10) showSearch();
+            else {
+                std::string output = captureOriginalDemo();
+                if (choice == 13) std::cout << output;
+                else {
+                    int index = choice - 1;
+                    if (choice == 8) index = 6;
+                    if (choice == 11) index = 7;
+                    if (choice == 12) index = 8;
+                    showSection(output, sections.at(index).first, sections.at(index).second);
+                }
+            }
+        } catch (const std::exception& e) { std::cout << "Demo error: " << e.what() << "\n"; }
+    }
     return 0;
 }
